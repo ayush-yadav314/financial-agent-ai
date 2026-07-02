@@ -1,0 +1,6 @@
+langgraph>=0.1.0
+langchain-google-genai>=1.0.1
+yfinance>=0.2.40
+streamlit>=1.35.0
+python-dotenv>=1.0.1
+tavily-python>=0.3.3
