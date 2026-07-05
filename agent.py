@@ -1,5 +1,6 @@
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import yfinance as yf
@@ -33,10 +34,13 @@ KNOWN_TICKERS = {
 
 def lookup_known_ticker(text: str):
     """Checks the user's message against a static company->ticker map before
-    spending an LLM call on extraction. Returns None if no confident match."""
+    spending an LLM call on extraction. Returns None if no confident match.
+    Uses word-boundary regex (not a plain substring check) so short entries
+    like 'meta' or 'sbi' don't false-positive-match inside unrelated words
+    (e.g. 'metadata', 'metaphor')."""
     text_lower = text.lower()
     for name, ticker in KNOWN_TICKERS.items():
-        if name in text_lower:
+        if re.search(r'\b' + re.escape(name) + r'\b', text_lower):
             return ticker
     return None
 
@@ -48,6 +52,7 @@ class AgentState(TypedDict):
     ticker: str
     stock_data: str
     web_research: str
+    metrics: dict
 
 # =====================================================================
 # 2. LLM CLIENTS (instantiated once, not per-call)
@@ -71,22 +76,34 @@ def fetch_stock_metrics(ticker: str):
     """Tool: Fetches clean numerical fundamentals from Yahoo Finance.
     Falls back to common Indian exchange suffixes (.NS, .BO) if the raw ticker
     doesn't resolve, since the LLM sometimes omits the suffix.
-    Returns a tuple: (resolved_ticker_or_original, formatted_metrics_string)."""
+    Also retries once after a short delay if Yahoo Finance returns an empty/blocked
+    response, since this is a known intermittent issue with yfinance's unofficial API.
+    Returns a tuple: (resolved_ticker_or_original, formatted_metrics_string, metrics_dict)."""
     candidates = [ticker]
     if "." not in ticker:
         candidates += [f"{ticker}.NS", f"{ticker}.BO"]
 
     last_error = None
     for candidate in candidates:
-        try:
-            stock = yf.Ticker(candidate)
-            info = stock.info
-            # A resolved ticker should have at least a name or a price; otherwise treat as a miss
-            if not info.get("longName") and not info.get("currentPrice"):
-                continue
-            margins = info.get('profitMargins', None)
-            margins_display = f"{margins * 100:.2f}%" if isinstance(margins, (int, float)) else "N/A"
-            formatted = f"""
+        for attempt in range(2):  # try once, retry once after a short delay if empty
+            try:
+                stock = yf.Ticker(candidate)
+                info = stock.info
+                if not info.get("longName") and not info.get("currentPrice"):
+                    if attempt == 0:
+                        time.sleep(1.5)  # brief pause — Yahoo's endpoint is sometimes just momentarily rate-limited
+                        continue
+                    break  # give up on this candidate after retry
+                margins = info.get('profitMargins', None)
+                margins_display = f"{margins * 100:.2f}%" if isinstance(margins, (int, float)) else "N/A"
+                metrics_dict = {
+                    "price": info.get("currentPrice"),
+                    "pe": info.get("trailingPE"),
+                    "low_52": info.get("fiftyTwoWeekLow"),
+                    "high_52": info.get("fiftyTwoWeekHigh"),
+                    "prev_close": info.get("previousClose"),
+                }
+                formatted = f"""
         Company Name: {info.get('longName', 'N/A')}
         Ticker Used: {candidate}
         Current Market Price: ${info.get('currentPrice', 'N/A')}
@@ -95,12 +112,15 @@ def fetch_stock_metrics(ticker: str):
         52-Week Low: ${info.get('fiftyTwoWeekLow', 'N/A')}
         Profit Margins: {margins_display}
         """
-            return candidate, formatted
-        except Exception as e:
-            last_error = e
-            continue
+                return candidate, formatted, metrics_dict
+            except Exception as e:
+                last_error = e
+                if attempt == 0:
+                    time.sleep(1.5)
+                    continue
+                break
 
-    return ticker, f"Could not gather market metrics for '{ticker}' (tried: {', '.join(candidates)}). Last error: {last_error}"
+    return ticker, f"Could not gather market metrics for '{ticker}' (tried: {', '.join(candidates)}). Last error: {last_error}", {}
 
 def search_market_news(ticker: str) -> str:
     """Tool: Fetches web articles and sentiment trends via Tavily."""
@@ -167,11 +187,13 @@ def researcher_node(state: AgentState):
     with ThreadPoolExecutor(max_workers=2) as executor:
         metrics_future = executor.submit(fetch_stock_metrics, ticker)
         news_future = executor.submit(search_market_news, ticker)
-        resolved_ticker, metrics = metrics_future.result()
+        resolved_ticker, metrics, metrics_dict = metrics_future.result()
         news = news_future.result()
     # If a suffix fallback (.NS/.BO) resolved the ticker, propagate that back into state
     # so downstream chart/metric rendering in app.py uses the correct resolvable ticker.
-    return {"stock_data": metrics, "web_research": news, "ticker": resolved_ticker}
+    # metrics_dict carries the raw numeric values forward so app.py doesn't need a
+    # second Yahoo Finance call just to render the metric cards.
+    return {"stock_data": metrics, "web_research": news, "ticker": resolved_ticker, "metrics": metrics_dict}
 
 
 def analyst_node(state: AgentState):
