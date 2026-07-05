@@ -27,12 +27,16 @@ st.divider()
 # HELPERS
 # =====================================================================
 def render_report(content: str):
-    """Renders assistant report content inside a styled card (Step 3)."""
+    """Renders assistant report content inside a styled card (Step 3).
+    Escapes bare '$' signs first, since Streamlit's markdown treats
+    single $ as LaTeX math-mode delimiters, which mangles currency
+    figures like '$393.45 ... $498.83' in the same paragraph."""
+    safe_content = re.sub(r'(?<!\\)\$', r'\\$', content)
     st.markdown(
         '<div style="background-color:#1A1D23; padding:1.2rem; border-radius:12px; border:1px solid #2A2E37;">',
         unsafe_allow_html=True
     )
-    st.markdown(content)
+    st.markdown(safe_content)
     st.markdown('</div>', unsafe_allow_html=True)
 
 
