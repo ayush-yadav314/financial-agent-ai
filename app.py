@@ -64,15 +64,19 @@ def render_price_chart(ticker: str):
         pass
 
 
-def render_metric_cards(ticker: str):
-    """Renders quick-glance metric cards for price, P/E, and 52-week range (Step 6)."""
+def render_metric_cards(metrics: dict):
+    """Renders quick-glance metric cards using data already fetched by the
+    agent's research step (Step 6) — avoids a redundant, potentially
+    rate-limited second call to Yahoo Finance."""
+    if not metrics:
+        st.caption("⚠️ Financial metrics unavailable for this ticker right now (data source may be temporarily rate-limited).")
+        return
     try:
-        info = yf.Ticker(ticker).info
-        price = info.get("currentPrice")
-        pe = info.get("trailingPE")
-        low_52 = info.get("fiftyTwoWeekLow")
-        high_52 = info.get("fiftyTwoWeekHigh")
-        prev_close = info.get("previousClose")
+        price = metrics.get("price")
+        pe = metrics.get("pe")
+        low_52 = metrics.get("low_52")
+        high_52 = metrics.get("high_52")
+        prev_close = metrics.get("prev_close")
 
         delta = None
         if price and prev_close:
@@ -182,7 +186,7 @@ for msg in st.session_state.messages:
         if msg["role"] == "assistant":
             if msg.get("ticker"):
                 render_price_chart(msg["ticker"])
-                render_metric_cards(msg["ticker"])
+                render_metric_cards(msg.get("metrics", {}))
             if msg.get("sentiment"):
                 render_sentiment_badge(msg["sentiment"])
             render_report(msg["content"])
@@ -224,11 +228,12 @@ if user_input:
         extracted_ticker = cached["ticker"]
         final_reply = cached["content"]
         sentiment = cached["sentiment"]
+        metrics = cached.get("metrics", {})
         with st.chat_message("assistant"):
             st.caption("⚡ Served from cache — no API call used")
             if extracted_ticker:
                 render_price_chart(extracted_ticker)
-                render_metric_cards(extracted_ticker)
+                render_metric_cards(metrics)
             if sentiment:
                 render_sentiment_badge(sentiment)
             render_report(final_reply)
@@ -243,7 +248,7 @@ if user_input:
                 )
         st.session_state.messages.append({
             "role": "assistant", "content": final_reply,
-            "ticker": extracted_ticker, "sentiment": sentiment
+            "ticker": extracted_ticker, "sentiment": sentiment, "metrics": metrics
         })
         st.stop()
 
@@ -254,6 +259,7 @@ if user_input:
     # 3. Stream the graph execution with a multi-stage status indicator (Step 7)
     extracted_ticker = ""
     final_reply = ""
+    metrics = {}
     with st.status("🔎 Identifying ticker...", expanded=True) as status:
         try:
             for step in financial_agent_app.stream(inputs, config=config, stream_mode="values"):
@@ -263,6 +269,8 @@ if user_input:
                         status.update(label=f"📊 Gathering data for {extracted_ticker}...")
                 if step.get("stock_data"):
                     status.update(label="🧠 Compiling analysis...")
+                if step.get("metrics"):
+                    metrics = step["metrics"]
                 if step["messages"] and isinstance(step["messages"][-1], AIMessage):
                     final_reply = step["messages"][-1].content
 
@@ -292,7 +300,7 @@ if user_input:
     with st.chat_message("assistant"):
         if extracted_ticker:
             render_price_chart(extracted_ticker)
-            render_metric_cards(extracted_ticker)
+            render_metric_cards(metrics)
         if sentiment:
             render_sentiment_badge(sentiment)
         render_report(final_reply)
@@ -311,7 +319,8 @@ if user_input:
         "role": "assistant",
         "content": final_reply,
         "ticker": extracted_ticker,
-        "sentiment": sentiment
+        "sentiment": sentiment,
+        "metrics": metrics
     })
 
     # Cache successful responses (skip caching error messages) so a repeated
@@ -321,5 +330,6 @@ if user_input:
         st.session_state.response_cache[cache_key] = {
             "ticker": extracted_ticker,
             "content": final_reply,
-            "sentiment": sentiment
+            "sentiment": sentiment,
+            "metrics": metrics
         }
