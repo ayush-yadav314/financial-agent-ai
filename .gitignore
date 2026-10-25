@@ -1,0 +1,17 @@
+# secrets: never commit these
+.env
+.streamlit/secrets.toml
+
+# saved watchlist / recent research (personal data)
+data/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# temporary test files
+app_backup.py
+logo_preview.py
+data_preview.py
+news_check.py
