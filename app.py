@@ -23,6 +23,7 @@ from ui.sidebar import render_sidebar, render_history, record_history
 from ui.prices import get_price_stats, price_error
 from ui.scorecard import compute_scorecard, render_scorecard
 from ui.compare import render_compare_entry, render_compare_view
+from ui.overview import render_overview_entry
 from ui.polish import perf_enabled, inject_polish_css, disable_3d_background, refresh_data
 from ui.followup import render_followups
 from ui.store import load_state, persist_state          # NEW
@@ -323,6 +324,7 @@ def finish_sidebar():
 # =====================================================================
 searching = render_search()
 render_compare_entry()
+render_overview_entry()
 
 if st.session_state.compare_items:
     cmp_pick = render_compare_view(st.session_state.compare_items)
