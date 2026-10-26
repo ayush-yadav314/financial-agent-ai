@@ -1,5 +1,5 @@
 """ui/overview.py
-Market overview panel: market pulse, major indices, top movers and a sector heatmap.
+Market overview panel: market pulse, major indices (with trend charts), top movers and a sector heatmap.
 
 Everything comes from Yahoo Finance daily data (via yfinance). Nothing is invented:
 data that Yahoo does not return is simply missing, and failures show a notice.
@@ -12,6 +12,7 @@ Scope (stated in the panel itself)
 - Each stock's change is its own latest session vs the session before it, so US and Indian stocks can come
   from different days. The date is shown on every row and tile.
 - The mood label is a plain count of stocks up vs down. It is not a prediction.
+- Index trend charts plot daily closing prices for the chosen range (1M, 3M or 1Y).
 
 Public API
     render_overview_entry()   a toggle; the panel loads only while it is switched on
@@ -27,14 +28,18 @@ from ui.data import currency, h, time_ago
 from ui.logos import logo_html, prefetch_logos
 from ui.polish import refresh_data
 
-# (Yahoo symbol, display name, region). An index Yahoo does not return is simply left out.
+# (Yahoo symbol, display name, region, one-line description). An index Yahoo does not return is left out.
+# The descriptions are static text written from general knowledge, not fetched.
 INDICES = [
-    ("^GSPC", "S&P 500", "US"),
-    ("^IXIC", "NASDAQ", "US"),
-    ("^DJI", "Dow Jones", "US"),
-    ("^NSEI", "NIFTY 50", "India"),
-    ("^BSESN", "SENSEX", "India"),
+    ("^GSPC", "S&P 500", "US", "500 large US companies"),
+    ("^IXIC", "NASDAQ", "US", "Nasdaq-listed stocks, tech-heavy"),
+    ("^DJI", "Dow Jones", "US", "30 large US companies"),
+    ("^NSEI", "NIFTY 50", "India", "50 large companies on the NSE"),
+    ("^BSESN", "SENSEX", "India", "30 large companies on the BSE"),
 ]
+
+# trend-chart ranges: number of trading-day closes (None = everything fetched, about one year)
+TRENDS = {"1M": 22, "3M": 64, "1Y": None}
 
 # simple groups made for this app (each ticker appears once). Edit freely.
 SECTORS = {
@@ -63,39 +68,59 @@ UNIVERSE = tuple(_NAMES)
 HEAT_FULL = 4.0          # a daily move of +/- this many percent gets the strongest tile colour
 
 _CSS = """
-.ov-head{display:flex;align-items:center;gap:.6rem;margin:.2rem 0 .3rem}
-.ov-title{font-family:var(--font-display);font-weight:800;font-size:1.25rem;color:#fff}
-.ov-t{display:flex;align-items:center;gap:.5rem;margin:1.3rem 0 .6rem;font-family:var(--font-display);font-weight:700;font-size:1rem;color:var(--text)}
-.ov-t::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--border-strong),transparent)}
-.ov-pulse{padding:1rem 1.2rem;border-radius:16px;border:1px solid var(--border-strong);border-top:2px solid var(--pc);background:linear-gradient(135deg,color-mix(in srgb,var(--pc) 8%,rgba(14,20,34,.82)),rgba(14,20,34,.78) 60%);box-shadow:0 18px 40px -30px var(--pc);animation:fadeUp .45s cubic-bezier(.2,.8,.2,1) both}
+.ov-head{display:flex;align-items:center;gap:.6rem;margin:.2rem 0 .1rem}
+.ov-title{font-family:var(--font-display);font-weight:800;font-size:1.3rem;letter-spacing:-.02em;color:#fff}
+.ov-fresh{display:inline-block;padding:.2rem .7rem;border-radius:999px;border:1px solid var(--border);background:rgba(255,255,255,.03);font-size:.7rem;color:var(--muted)}
+.ov-t{display:flex;align-items:baseline;gap:.6rem;margin:1.5rem 0 .75rem;font-family:var(--font-display);font-weight:700;font-size:1.02rem;color:var(--text)}
+.ov-ts{font-family:var(--font-body);font-weight:500;font-size:.74rem;color:var(--muted)}
+.ov-t::after{content:"";flex:1;align-self:center;height:1px;background:linear-gradient(90deg,var(--border-strong),transparent)}
+.ov-pulse{padding:1.1rem 1.25rem;border-radius:16px;border:1px solid var(--border-strong);border-top:2px solid var(--pc);background:linear-gradient(135deg,color-mix(in srgb,var(--pc) 8%,rgba(14,20,34,.82)),rgba(14,20,34,.78) 60%);box-shadow:0 18px 40px -30px var(--pc);animation:fadeUp .45s cubic-bezier(.2,.8,.2,1) both}
 .ov-pl{font-size:.66rem;letter-spacing:.16em;font-weight:600;color:var(--muted)}
-.ov-pm{font-family:var(--font-display);font-weight:800;font-size:1.5rem;line-height:1.2;color:var(--pc);margin:.2rem 0 .1rem}
+.ov-pm{font-family:var(--font-display);font-weight:800;font-size:1.55rem;line-height:1.2;color:var(--pc);margin:.2rem 0 .1rem}
 .ov-ps{font-size:.84rem;color:var(--text);font-variant-numeric:tabular-nums}
-.ov-bb{display:flex;height:8px;border-radius:8px;overflow:hidden;background:rgba(255,255,255,.08);margin:.7rem 0 .5rem}
+.ov-bb{display:flex;height:8px;border-radius:8px;overflow:hidden;background:rgba(255,255,255,.08);margin:.75rem 0 .5rem}
 .ov-bb i{display:block;height:100%}
 .ov-bb i.up{background:linear-gradient(90deg,rgba(16,185,129,.55),#10B981)}
 .ov-bb i.fl{background:rgba(255,255,255,.22)}
 .ov-bb i.dn{background:linear-gradient(270deg,rgba(244,63,94,.55),#F43F5E)}
-.ov-pg{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.55rem;margin-top:.8rem}
-.ov-px2{padding:.5rem .7rem;border-radius:10px;border:1px solid var(--border);background:rgba(255,255,255,.03)}
+.ov-pg{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.6rem;margin-top:.85rem}
+.ov-px2{padding:.55rem .75rem;border-radius:10px;border:1px solid var(--border);background:rgba(255,255,255,.03)}
 .ov-pk{font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
 .ov-pv{font-weight:600;font-size:.86rem;color:var(--text);margin-top:.1rem;line-height:1.35}
-.ov-idx{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.7rem}
-.ov-card{padding:.85rem 1rem;border-radius:14px;border:1px solid var(--border);background:rgba(12,17,29,.72);transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease;animation:fadeUp .45s cubic-bezier(.2,.8,.2,1) both}
-.ov-card:hover{transform:translateY(-2px);border-color:rgba(34,211,238,.4);box-shadow:0 12px 28px -18px rgba(34,211,238,.5)}
-.ov-ct{display:flex;align-items:center;justify-content:space-between;gap:.5rem}
-.ov-n{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
-.ov-chip{padding:.05rem .5rem;border-radius:999px;border:1px solid var(--border);font-size:.62rem;color:var(--muted)}
-.ov-lv{font-family:var(--font-display);font-weight:700;font-size:1.4rem;color:#fff;margin:.15rem 0;font-variant-numeric:tabular-nums}
-.ov-pc{font-size:.86rem;font-weight:600;font-variant-numeric:tabular-nums}
-.ov-sp{display:block;width:100%;height:40px;margin:.45rem 0 .3rem}
-.ov-rets{font-size:.72rem;color:var(--muted);font-variant-numeric:tabular-nums}
-.ov-pos{position:relative;height:4px;border-radius:4px;background:rgba(255,255,255,.1);margin:.55rem 0 .25rem}
+.ov-idx{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:.9rem}
+.ov-card{position:relative;overflow:hidden;padding:1.05rem 1.15rem 1rem;border-radius:16px;border:1px solid var(--border);border-top:2px solid var(--k);background:linear-gradient(160deg,color-mix(in srgb,var(--k) 7%,rgba(14,20,34,.84)),rgba(12,17,29,.8) 58%);transition:transform .22s ease,border-color .22s ease,box-shadow .22s ease;animation:fadeUp .5s cubic-bezier(.2,.8,.2,1) both}
+.ov-card::after{content:"";position:absolute;top:0;bottom:0;left:-60%;width:40%;background:linear-gradient(100deg,transparent,rgba(255,255,255,.05),transparent);transition:left .7s ease;pointer-events:none}
+.ov-card:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--k) 45%,transparent);box-shadow:0 18px 36px -22px var(--k)}
+.ov-card:hover::after{left:120%}
+.ov-card:hover .ov-sp polyline{stroke-width:2.6}
+.ov-ct{display:flex;align-items:flex-start;justify-content:space-between;gap:.5rem}
+.ov-n{font-family:var(--font-display);font-weight:700;font-size:.95rem;letter-spacing:.02em;color:var(--text)}
+.ov-d{font-size:.72rem;color:var(--muted);margin-top:.1rem;line-height:1.35}
+.ov-chip{flex:0 0 auto;padding:.1rem .55rem;border-radius:999px;border:1px solid var(--border);font-size:.62rem;color:var(--muted)}
+.ov-lv{font-family:var(--font-display);font-weight:800;font-size:1.75rem;letter-spacing:-.02em;line-height:1.15;color:#fff;margin:.5rem 0 .3rem;font-variant-numeric:tabular-nums}
+.ov-chrow{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+.ov-pill{display:inline-block;padding:.15rem .6rem;border-radius:999px;font-size:.8rem;font-weight:700;font-variant-numeric:tabular-nums}
+.ov-pill.up{color:var(--success);background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.35)}
+.ov-pill.down{color:var(--danger);background:rgba(244,63,94,.12);border:1px solid rgba(244,63,94,.35)}
+.ov-vs{font-size:.68rem;color:var(--muted)}
+.ov-spw{position:relative;margin:.75rem 0 .25rem}
+.ov-sp{display:block;width:100%;height:56px}
+.ov-dot{position:absolute;right:2px;width:9px;height:9px;margin-top:-4.5px;border-radius:50%;background:var(--dc);box-shadow:0 0 10px var(--dc)}
+.ov-dot::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1px solid var(--dc);opacity:0;animation:ovPing 2.4s ease-out infinite}
+@keyframes ovPing{0%{transform:scale(.6);opacity:.7}100%{transform:scale(1.6);opacity:0}}
+.ov-axis{display:flex;justify-content:space-between;font-size:.66rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.ov-lh{font-size:.68rem;color:var(--muted);margin-top:.15rem;font-variant-numeric:tabular-nums}
+.ov-rets{display:flex;gap:.35rem;margin:.7rem 0 .15rem;flex-wrap:wrap}
+.ov-rc{display:inline-flex;align-items:baseline;gap:.35rem;padding:.12rem .55rem;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,.03);font-size:.72rem;font-weight:700;font-variant-numeric:tabular-nums}
+.ov-rc em{font-style:normal;font-weight:500;font-size:.62rem;letter-spacing:.06em;color:var(--muted)}
+.ov-rc.sel{border-color:color-mix(in srgb,var(--accent) 55%,transparent);background:rgba(34,211,238,.08)}
+.ov-pos{position:relative;height:4px;border-radius:4px;background:rgba(255,255,255,.1);margin:.7rem 0 .25rem}
 .ov-pos i{position:absolute;top:50%;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent)}
-.ov-m{font-size:.7rem;color:var(--muted)}
+.ov-rl{display:flex;justify-content:space-between;font-size:.64rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.ov-m{font-size:.68rem;color:var(--muted);margin-top:.5rem}
 .ov-up{color:var(--success)}.ov-down{color:var(--danger)}.ov-na{color:var(--muted);font-weight:400}
-.ov-row{display:flex;align-items:center;gap:.6rem;min-height:46px;padding:.35rem .55rem;border-radius:12px;border:1px solid var(--border);background:rgba(255,255,255,.03);transition:border-color .2s ease}
-.ov-row:hover{border-color:rgba(34,211,238,.4)}
+.ov-row{display:flex;align-items:center;gap:.6rem;min-height:46px;padding:.35rem .55rem;border-radius:12px;border:1px solid var(--border);background:rgba(255,255,255,.03);transition:border-color .2s ease,transform .2s ease}
+.ov-row:hover{border-color:rgba(34,211,238,.4);transform:translateX(2px)}
 .ov-mid{flex:1;min-width:0;line-height:1.25}
 .ov-rn{font-size:.82rem;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ov-rs{font-size:.66rem;color:var(--muted);letter-spacing:.03em}
@@ -104,7 +129,7 @@ _CSS = """
 .ov-c{font-size:.72rem;font-weight:600;font-variant-numeric:tabular-nums}
 .ov-c.up{color:var(--success)}.ov-c.down{color:var(--danger)}
 .ov-h{font-size:.78rem;font-weight:600;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin:.2rem 0 .1rem}
-.ov-sh{display:flex;align-items:center;gap:.7rem;margin:1rem 0 .45rem}
+.ov-sh{display:flex;align-items:center;gap:.7rem;margin:1.1rem 0 .5rem}
 .ov-sn{font-size:.86rem;font-weight:700;color:var(--text);flex:0 0 auto}
 .ov-track{position:relative;flex:1;max-width:180px;height:7px;border-radius:7px;background:rgba(255,255,255,.07)}
 .ov-track::after{content:"";position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:rgba(255,255,255,.25)}
@@ -119,8 +144,13 @@ _CSS = """
 .ov-tile b{display:block;font-size:.8rem;font-variant-numeric:tabular-nums}
 .ov-leg{display:flex;align-items:center;gap:.5rem;margin-top:.9rem;font-size:.7rem;color:var(--muted)}
 .ov-leg i{display:block;width:150px;height:8px;border-radius:8px;background:linear-gradient(90deg,rgba(244,63,94,.64),rgba(255,255,255,.08),rgba(16,185,129,.64))}
-.ov-note{color:var(--muted);font-size:.74rem;line-height:1.6;margin:.8rem 0 0}
-@media (max-width:640px){.ov-track{display:none}.ov-tile{min-width:64px}}
+.ov-gl{margin-top:1.3rem;padding:.7rem 1rem;border-radius:12px;border:1px solid var(--border);background:rgba(255,255,255,.025)}
+.ov-gl summary{cursor:pointer;color:var(--accent);font-size:.84rem;font-weight:600}
+.ov-gl ul{margin:.6rem 0 .2rem;padding-left:1.1rem}
+.ov-gl li{margin:.4rem 0;font-size:.8rem;line-height:1.6;color:var(--muted)}
+.ov-gl li b{color:var(--text);font-weight:600}
+.ov-note{color:var(--muted);font-size:.74rem;line-height:1.6;margin:.9rem 0 0}
+@media (max-width:640px){.ov-track{display:none}.ov-tile{min-width:64px}.ov-lv{font-size:1.5rem}}
 [class*="st-key-ov_g_"] button,[class*="st-key-ov_l_"] button{min-height:34px;padding:.15rem .5rem}
 [class*="st-key-ov_g_"] button p,[class*="st-key-ov_l_"] button p{font-size:.78rem}
 """
@@ -133,6 +163,11 @@ def _css() -> str:
 
 def _md(s: str) -> None:
     st.markdown(s, unsafe_allow_html=True)
+
+
+def _title(text: str, sub: str = "") -> None:
+    sub_html = f'<span class="ov-ts">{h(sub)}</span>' if sub else ""
+    _md(f'<div class="ov-t">{h(text)}{sub_html}</div>')
 
 
 def _cols(spec):
@@ -168,16 +203,9 @@ def _closes(data, sym):
     return None
 
 
-def _ret(closes, k):
-    """Percent change from k sessions ago to the latest close (None if there is not enough history)."""
-    if len(closes) >= k and closes[-k]:
-        return (closes[-1] / closes[-k] - 1) * 100
-    return None
-
-
 @st.cache_data(ttl=300, show_spinner=False)
 def _fetch_indices() -> dict:
-    syms = [s for s, _n, _r in INDICES]
+    syms = [s for s, _n, _r, _d in INDICES]
     data = yf.download(syms, period="1y", interval="1d", group_by="ticker",
                        progress=False, threads=True, auto_adjust=True, timeout=10)
     out = {}
@@ -189,15 +217,12 @@ def _fetch_indices() -> dict:
         prev = closes[-2]
         if not prev:
             continue
-        lo, hi = min(closes), max(closes)
         out[sym] = {
             "level": closes[-1],
+            "prev": prev,
             "pct": (closes[-1] - prev) / prev * 100,
-            "ret_1m": _ret(closes, 22),
-            "ret_3m": _ret(closes, 64),
-            "ret_1y": (closes[-1] / closes[0] - 1) * 100 if len(closes) >= 240 and closes[0] else None,
-            "series": closes[-64:],                              # about three months for the sparkline
-            "pos": (closes[-1] - lo) / (hi - lo) if hi > lo else None,
+            "closes": closes,                                              # about one year of daily closes
+            "labels": [d.strftime("%d %b") for d in s.index],              # "22 Sep", parallel to closes
             "date": s.index[-1].strftime("%d %b %Y"),
         }
     if not out:
@@ -249,6 +274,23 @@ def _refresh_overview() -> None:
     st.session_state.pop("_retry_overview", None)
 
 
+def _ret(closes, k):
+    """Percent change from k sessions ago to the latest close (None if there is not enough history)."""
+    if len(closes) >= k and closes[-k]:
+        return (closes[-1] / closes[-k] - 1) * 100
+    return None
+
+
+def _window(closes, labels, key):
+    """(closes, labels, enough_history) for one trend range. 1Y needs about 240 sessions to count as a full year."""
+    k = TRENDS[key]
+    if k is None:
+        return closes, labels, len(closes) >= 240
+    if len(closes) < k:
+        return closes, labels, False
+    return closes[-k:], labels[-k:], True
+
+
 # ---------------------------------------------------------------------
 # html pieces
 # ---------------------------------------------------------------------
@@ -258,48 +300,94 @@ def _fmt_ret(v) -> str:
     return f'<span class="{"ov-up" if v >= 0 else "ov-down"}">{v:+.1f}%</span>'
 
 
-def _spark(series, up: bool) -> str:
+def _spark(series, up: bool):
+    """(svg, y of the latest point as a percent of the chart height)."""
     if len(series) < 2:
-        return ""
+        return "", 50.0
+    w, ht, pad = 160, 56, 5
     lo, hi = min(series), max(series)
     span = (hi - lo) or 1.0
-    w, ht = 140, 40
-    pts = [(i * w / (len(series) - 1), ht - 3 - (v - lo) / span * (ht - 6)) for i, v in enumerate(series)]
-    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+
+    def y(v):
+        return pad + (hi - v) / span * (ht - 2 * pad)
+
+    pts = [(i * w / (len(series) - 1), y(v)) for i, v in enumerate(series)]
+    line = " ".join(f"{x:.1f},{yy:.1f}" for x, yy in pts)
     area = f"0,{ht} {line} {w},{ht}"
+    base = y(series[0])                                          # where the period started
     color, fill = ("#10B981", "rgba(16,185,129,.16)") if up else ("#F43F5E", "rgba(244,63,94,.16)")
-    return (f'<svg class="ov-sp" viewBox="0 0 {w} {ht}" preserveAspectRatio="none" aria-hidden="true">'
-            f'<polygon points="{area}" fill="{fill}"/>'
-            f'<polyline points="{line}" fill="none" stroke="{color}" stroke-width="1.8" '
-            'stroke-linejoin="round" stroke-linecap="round"/></svg>')
+    svg = (f'<svg class="ov-sp" viewBox="0 0 {w} {ht}" preserveAspectRatio="none" aria-hidden="true">'
+           f'<line x1="0" y1="{base:.1f}" x2="{w}" y2="{base:.1f}" stroke="rgba(255,255,255,.22)" '
+           'stroke-width="1" stroke-dasharray="3 3"/>'
+           f'<polygon points="{area}" fill="{fill}"/>'
+           f'<polyline points="{line}" fill="none" stroke="{color}" stroke-width="2" '
+           'stroke-linejoin="round" stroke-linecap="round"/></svg>')
+    return svg, pts[-1][1] / ht * 100
 
 
-def _index_cards(items: dict, region: str):
+def _index_cards(items: dict, region: str, trend: str = "3M"):
     """(html, names of indices that returned no data)."""
     cards, missing = [], []
-    for i, (sym, name, reg) in enumerate(INDICES):
+    for i, (sym, name, reg, desc) in enumerate(INDICES):
         if region != "All" and reg != region:
             continue
         it = items.get(sym)
-        if not it:
+        if not it or not it.get("closes"):
             missing.append(name)
             continue
+        closes = it["closes"]
+        labels = it.get("labels") or [""] * len(closes)
+        series, slabels, enough = _window(closes, labels, trend)
         up = it["pct"] >= 0
+        color = "#10B981" if up else "#F43F5E"
+        diff = it["level"] - it["prev"]
+
+        svg, dot_y = _spark(series, series[-1] >= series[0])
+        dot_color = "#10B981" if series[-1] >= series[0] else "#F43F5E"
+        lo_w, hi_w = min(series), max(series)
+        note = "" if enough else f' · only {len(series)} sessions of data available'
+        chart = (f'<div class="ov-spw">{svg}<i class="ov-dot" style="top:{dot_y:.1f}%;--dc:{dot_color}"></i></div>'
+                 f'<div class="ov-axis"><span>{h(slabels[0])}</span><span>{h(slabels[-1])}</span></div>'
+                 f'<div class="ov-lh">Low {lo_w:,.2f} · High {hi_w:,.2f}{h(note)}</div>')
+
+        chips = []
+        for key in TRENDS:
+            s_k, _l, ok_k = _window(closes, labels, key)
+            val = (s_k[-1] / s_k[0] - 1) * 100 if ok_k and s_k[0] else None
+            chips.append(f'<span class="ov-rc{" sel" if key == trend else ""}"><em>{key}</em>{_fmt_ret(val)}</span>')
+
+        lo_all, hi_all = min(closes), max(closes)
         pos_html = ""
-        if it["pos"] is not None:
-            pos_html = (f'<div class="ov-pos"><i style="left:{it["pos"] * 100:.0f}%"></i></div>'
-                        f'<div class="ov-m">{it["pos"] * 100:.0f}% of its 1-year range (closing prices)</div>')
+        if hi_all > lo_all:
+            pos = (it["level"] - lo_all) / (hi_all - lo_all) * 100
+            span_label = "1-year" if len(closes) >= 240 else f"{len(closes)}-session"
+            pos_html = (f'<div class="ov-pos"><i style="left:{pos:.0f}%"></i></div>'
+                        f'<div class="ov-rl"><span>{lo_all:,.0f}</span><span>{pos:.0f}% of its {span_label} range</span>'
+                        f'<span>{hi_all:,.0f}</span></div>')
+
         cards.append(
-            f'<div class="ov-card" style="animation-delay:{i * 0.05:.2f}s">'
-            f'<div class="ov-ct"><span class="ov-n">{h(name)}</span><span class="ov-chip">{h(reg)}</span></div>'
+            f'<div class="ov-card" style="--k:{color};animation-delay:{i * 0.06:.2f}s">'
+            f'<div class="ov-ct"><div><div class="ov-n">{h(name)}</div><div class="ov-d">{h(desc)}</div></div>'
+            f'<span class="ov-chip">{h(reg)}</span></div>'
             f'<div class="ov-lv">{it["level"]:,.2f}</div>'
-            f'<div class="ov-pc {"ov-up" if up else "ov-down"}">{"▲" if up else "▼"} {abs(it["pct"]):.2f}% vs previous close</div>'
-            f'{_spark(it["series"], it["series"][-1] >= it["series"][0])}'
-            f'<div class="ov-rets">1M {_fmt_ret(it["ret_1m"])} · 3M {_fmt_ret(it["ret_3m"])} · 1Y {_fmt_ret(it["ret_1y"])}</div>'
+            f'<div class="ov-chrow"><span class="ov-pill {"up" if up else "down"}">{"▲" if up else "▼"} '
+            f'{abs(diff):,.2f} ({abs(it["pct"]):.2f}%)</span><span class="ov-vs">vs previous close</span></div>'
+            f'{chart}'
+            f'<div class="ov-rets">{"".join(chips)}</div>'
             f'{pos_html}'
-            f'<div class="ov-m">Last close {h(it["date"])}</div></div>'
+            f'<div class="ov-m">Last close {h(it["date"])} · closing prices, Yahoo Finance</div></div>'
         )
     return '<div class="ov-idx">' + "".join(cards) + "</div>", missing
+
+
+def _index_summary(items: dict, region: str) -> str:
+    """A live one-liner such as '4 of 5 rose at their last close' (empty if nothing to count)."""
+    shown = [items[s] for s, _n, reg, _d in INDICES
+             if (region == "All" or reg == region) and s in items and items[s].get("closes")]
+    if not shown:
+        return ""
+    up = sum(1 for it in shown if it["pct"] > 0)
+    return f"{up} of {len(shown)} rose at their last close"
 
 
 def _sector_rows(items: dict) -> list:
@@ -400,6 +488,24 @@ def _mover_row(t: str, q: dict) -> str:
             f'<div class="ov-c {"up" if up else "down"}">{"▲" if up else "▼"} {abs(q["pct"]):.2f}%</div></div></div>')
 
 
+_GLOSSARY = (
+    '<details class="ov-gl"><summary>How to read this panel</summary><ul>'
+    '<li><b>▲ / ▼ and the percentage:</b> how much the latest close differs from the close before it. '
+    'It is not a live price, and the close can be hours or days old.</li>'
+    '<li><b>Trend chart:</b> daily closing prices over the chosen range. The dashed line marks where the period '
+    'started, and the glowing dot is the latest close.</li>'
+    '<li><b>1M / 3M / 1Y:</b> change from the close about one month, three months or one year ago to the latest '
+    'close. A one-year figure needs about a year of data.</li>'
+    '<li><b>Range bar:</b> where the latest close sits between the lowest and highest close of the past year '
+    '(0% is the lowest, 100% is the highest).</li>'
+    '<li><b>Market pulse:</b> how many catalog stocks rose or fell in their latest session. It is a count, '
+    'not a forecast.</li>'
+    '<li><b>Heatmap:</b> each tile is a stock. Green means up, red means down, and a deeper colour means a '
+    'bigger move.</li>'
+    '</ul></details>'
+)
+
+
 # ---------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------
@@ -415,9 +521,15 @@ def render_overview() -> None:
         idx, idx_stale = _load("indices", _fetch_indices)
         mov, mov_stale = _load("movers", _fetch_movers, UNIVERSE)
 
-    top = _cols([5, 1.4])
-    top[0].markdown('<div class="ov-head"><span class="ov-title">🌐 Market overview</span></div>', unsafe_allow_html=True)
-    top[1].button("↻ Refresh", key="ov_refresh", use_container_width=True, on_click=_refresh_overview,
+    stamps = [d["fetched_at"] for d in (idx, mov) if d]
+
+    top = _cols([4.2, 2.4, 1.4])
+    top[0].markdown('<div class="ov-head"><span class="ov-title">🌐 Market overview</span></div>',
+                    unsafe_allow_html=True)
+    if stamps:
+        top[1].markdown(f'<span class="ov-fresh">Data fetched {h(time_ago(min(stamps)))}</span>',
+                        unsafe_allow_html=True)
+    top[2].button("↻ Refresh", key="ov_refresh", use_container_width=True, on_click=_refresh_overview,
                   help="Re-download the overview data now")
 
     if idx is None and mov is None:
@@ -426,11 +538,10 @@ def render_overview() -> None:
         st.button("↻ Retry", key="ov_retry", on_click=refresh_data)
         return
 
-    c1, c2 = st.columns([2, 1.4])
-    region = c1.radio("Region", ["All", "US", "India"], horizontal=True, key="ov_region",
-                      label_visibility="collapsed")
-    count = c2.radio("Movers shown", ["Top 5", "Top 10"], horizontal=True, key="ov_n",
-                     label_visibility="collapsed")
+    c1, c2, c3 = st.columns([2, 1.7, 1.5])
+    region = c1.radio("Region", ["All", "US", "India"], horizontal=True, key="ov_region")
+    trend = c2.radio("Index chart range", list(TRENDS), index=1, horizontal=True, key="ov_trend")
+    count = c3.radio("Movers shown", ["Top 5", "Top 10"], horizontal=True, key="ov_n")
     n_show = 5 if count == "Top 5" else 10
 
     all_items = (mov or {}).get("items", {})
@@ -444,9 +555,9 @@ def render_overview() -> None:
         st.caption("Stock data is unavailable right now, so the market pulse can't be shown.")
 
     # ---- indices ----
-    _md('<div class="ov-t">Major indices</div>')
+    _title("Major indices", _index_summary(idx["items"], region) if idx else "How the big markets did at their last close")
     if idx:
-        html_cards, missing = _index_cards(idx["items"], region)
+        html_cards, missing = _index_cards(idx["items"], region, trend)
         if html_cards.count("ov-card") or not missing:
             _md(html_cards)
         if missing:
@@ -455,7 +566,7 @@ def render_overview() -> None:
         st.caption("Index data is unavailable right now.")
 
     # ---- movers ----
-    _md('<div class="ov-t">Top movers · built-in catalog</div>')
+    _title("Top movers", "Biggest gainers and losers in the built-in catalog")
     if items:
         ranked = sorted(items.items(), key=lambda kv: kv[1]["pct"], reverse=True)
         gainers = [(t, q) for t, q in ranked if q["pct"] > 0][:n_show]
@@ -483,14 +594,14 @@ def render_overview() -> None:
         st.caption("Stock data is unavailable right now.")
 
     # ---- sector heatmap ----
-    _md('<div class="ov-t">Sector heatmap · built-in catalog</div>')
+    _title("Sector heatmap", "Every stock in the catalog, grouped by sector")
     if rows:
         _md(_heatmap_html(rows))
     else:
         st.caption("Not enough data to build the heatmap right now.")
 
-    # ---- freshness and honesty notes ----
-    stamps = [d["fetched_at"] for d in (idx, mov) if d]
+    # ---- how to read + freshness and honesty notes ----
+    _md(_GLOSSARY)
     notes = []
     if stamps:
         notes.append(f"Data fetched {h(time_ago(min(stamps)))} · cached for up to 5 minutes · "
