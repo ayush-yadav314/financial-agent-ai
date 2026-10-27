@@ -26,6 +26,7 @@ from ui.compare import render_compare_entry, render_compare_view
 from ui.overview import render_overview_entry
 from ui.polish import perf_enabled, inject_polish_css, disable_3d_background, refresh_data
 from ui.followup import render_followups
+from ui.export import build_report_html
 from ui.store import load_state, persist_state          # NEW
 
 # Example questions that type themselves into the chat box
@@ -254,13 +255,31 @@ def render_assistant_block(ticker, sentiment, metrics, content, uid, ts=None, an
     with st.expander("🔎 Sources & data freshness", expanded=False):
         render_freshness(profile, ts, stats)
 
-    st.download_button(
-        label="⬇️ Download report (Markdown)",
+    try:
+        report_html = build_report_html(ticker, profile, metrics, sentiment, content, ts,
+                                        signals=signals, card=card, news=news, stats=stats,
+                                        followups=followups)
+    except Exception:
+        report_html = None                            # a broken export must never hide the report itself
+
+    d1, d2, _space = st.columns([1.2, 1.7, 3])
+    d1.download_button(
+        label="⬇️ Markdown",
         data=build_markdown_export(ticker, sentiment, content, ts),
         file_name=f"{ticker}_report.md",
         mime="text/markdown",
         key=f"dl_{uid}",
+        use_container_width=True,
     )
+    if report_html:
+        d2.download_button(
+            label="⬇️ Report (HTML / PDF)",
+            data=report_html,
+            file_name=f"{ticker}_report.html",
+            mime="text/html",
+            key=f"dlh_{uid}",
+            use_container_width=True,
+        )
 
 
 def safe_render_block(ticker, sentiment, metrics, content, uid, **kwargs):
