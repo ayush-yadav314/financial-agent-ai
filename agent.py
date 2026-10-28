@@ -317,6 +317,10 @@ def analyst_node(state: AgentState):
     """Agent 3: Compiles complete analytical report outcomes."""
     print(f"[AGENT LOG] Analyst Node compiling final report...")
     today = datetime.now().strftime("%d %B %Y")
+    if not state.get("metrics"):
+        return {"messages": [AIMessage(content=(
+            "⚠️ **No verified market data could be retrieved for this stock right now**, so no report was written. "
+            "Yahoo Finance may be rate-limiting this server. Please try again in a few minutes."))]}
 
     analysis_prompt = f"""
     You are an elite financial research analyst who writes clear, easy-to-understand reports for
