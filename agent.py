@@ -142,7 +142,7 @@ def fetch_stock_metrics(ticker: str):
                     time.sleep(1.5)
                     continue
                 break
-
+    print(f"[AGENT LOG] Metrics unavailable for {ticker} (tried {', '.join(candidates)}). Last error: {last_error!r}")
     return ticker, f"Could not gather market metrics for '{ticker}' (tried: {', '.join(candidates)}). Last error: {last_error}", {}
 
 def search_market_news(ticker: str) -> str:

@@ -28,6 +28,7 @@ from ui.polish import perf_enabled, inject_polish_css, disable_3d_background, re
 from ui.followup import render_followups
 from ui.export import build_report_html
 from ui.store import load_state, persist_state          # NEW
+from ui.diagnostics import render_diagnostics
 
 # Example questions that type themselves into the chat box
 PROMPTS = [
@@ -320,12 +321,17 @@ if not st.session_state.messages:
 # =====================================================================
 # SIDEBAR (branding, controls, watchlist, recent research, popular stocks)
 # =====================================================================
+
 with st.sidebar:
     side_query, history_slot = render_sidebar()
+
+render_diagnostics()
+
 if side_query:
     st.session_state.pending_query = side_query
     st.session_state.compare_items = None
     st.rerun()
+
 
 
 def finish_sidebar():

@@ -17,10 +17,27 @@ import threading
 from pathlib import Path
 
 import streamlit as st
+from dotenv import load_dotenv
 
 from ui.sidebar import MAX_HISTORY, MAX_WATCH
 
-ENABLED = os.getenv("FIN_PERSIST", "1").strip().lower() not in ("0", "false", "no", "off")
+load_dotenv()          # read a local .env even if this module is imported first
+
+
+def _flag(value, default=False):
+    """Parse an on/off setting. Anything unrecognised (or missing) gives `default`."""
+    v = (value or "").strip().lower()
+    if v in ("1", "true", "yes", "on"):
+        return True
+    if v in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
+# Saving is OPT-IN. The saved file is shared by everyone who uses the same server, so it stays
+# off unless someone turns it on deliberately (FIN_PERSIST=1 in your local .env file).
+# A missing, empty or unreadable setting therefore means "off", which is the safe direction.
+ENABLED = _flag(os.getenv("FIN_PERSIST"), default=False)
 _DIR = Path(os.getenv("FIN_DATA_DIR") or (Path(__file__).resolve().parent.parent / "data"))
 _PATH = _DIR / "user_state.json"
 _MAX_BYTES = 200_000
