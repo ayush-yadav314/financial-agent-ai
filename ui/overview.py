@@ -70,6 +70,7 @@ HEAT_FULL = 4.0          # a daily move of +/- this many percent gets the strong
 _CSS = """
 .ov-head{display:flex;align-items:center;gap:.6rem;margin:.2rem 0 .1rem}
 .ov-title{font-family:var(--font-display);font-weight:800;font-size:1.3rem;letter-spacing:-.02em;color:#fff}
+.ov-ctl{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;font-weight:600;color:var(--muted);margin:.2rem 0 .1rem}
 .ov-fresh{display:inline-block;padding:.2rem .7rem;border-radius:999px;border:1px solid var(--border);background:rgba(255,255,255,.03);font-size:.7rem;color:var(--muted)}
 .ov-t{display:flex;align-items:baseline;gap:.6rem;margin:1.5rem 0 .75rem;font-family:var(--font-display);font-weight:700;font-size:1.02rem;color:var(--text)}
 .ov-ts{font-family:var(--font-body);font-weight:500;font-size:.74rem;color:var(--muted)}
@@ -410,12 +411,17 @@ def _pulse_html(items: dict, rows: list) -> str:
     dn = sum(1 for p in pcts if p < 0)
     fl = n - up - dn
     avg = sum(pcts) / n
+    share = up / n
     if n < 5:
         mood, color = "Too few stocks for a read", "#8B93A7"
-    elif up / n >= 0.65:
+    elif share >= 0.65:
         mood, color = "Broadly positive", "#10B981"
-    elif up / n <= 0.35:
+    elif share <= 0.35:
         mood, color = "Broadly negative", "#F43F5E"
+    elif share >= 0.55 and avg > 0:
+        mood, color = "Leaning positive", "#34D399"
+    elif share <= 0.45 and avg < 0:
+        mood, color = "Leaning negative", "#FB7185"
     else:
         mood, color = "Mixed", "#F59E0B"
 
@@ -439,7 +445,7 @@ def _pulse_html(items: dict, rows: list) -> str:
         f'<div class="ov-pulse" style="--pc:{color};">'
         '<div class="ov-pl">MARKET PULSE · CATALOG BREADTH</div>'
         f'<div class="ov-pm">{h(mood)}</div>'
-        f'<div class="ov-ps">{up} up · {dn} down{f" · {fl} flat" if fl else ""} · average {avg:+.2f}% across {n} stocks</div>'
+        f'<div class="ov-ps">{up} up · {dn} down{f" · {fl} flat" if fl else ""} · {share * 100:.0f}% rose · average {avg:+.2f}% across {n} stocks</div>'
         f'<div class="ov-bb"><i class="up" style="width:{up / n * 100:.1f}%"></i>'
         f'<i class="fl" style="width:{fl / n * 100:.1f}%"></i><i class="dn" style="width:{dn / n * 100:.1f}%"></i></div>'
         f'<div class="ov-pg">{"".join(stats)}</div></div>'
@@ -498,8 +504,9 @@ _GLOSSARY = (
     'close. A one-year figure needs about a year of data.</li>'
     '<li><b>Range bar:</b> where the latest close sits between the lowest and highest close of the past year '
     '(0% is the lowest, 100% is the highest).</li>'
-    '<li><b>Market pulse:</b> how many catalog stocks rose or fell in their latest session. It is a count, '
-    'not a forecast.</li>'
+    '<li><b>Market pulse:</b> how many catalog stocks rose or fell in their latest session. "Broadly" means about '
+    'two thirds or more moved the same way, "Leaning" means a modest majority with the average change pointing '
+    'the same way, and "Mixed" means close to even. It is a count of one day, not a forecast.</li>'
     '<li><b>Heatmap:</b> each tile is a stock. Green means up, red means down, and a deeper colour means a '
     'bigger move.</li>'
     '</ul></details>'
@@ -539,9 +546,15 @@ def render_overview() -> None:
         return
 
     c1, c2, c3 = st.columns([2, 1.7, 1.5])
-    region = c1.radio("Region", ["All", "US", "India"], horizontal=True, key="ov_region")
-    trend = c2.radio("Index chart range", list(TRENDS), index=1, horizontal=True, key="ov_trend")
-    count = c3.radio("Movers shown", ["Top 5", "Top 10"], horizontal=True, key="ov_n")
+    c1.markdown('<div class="ov-ctl">Region</div>', unsafe_allow_html=True)
+    region = c1.radio("Region", ["All", "US", "India"], horizontal=True, key="ov_region",
+                      label_visibility="collapsed")
+    c2.markdown('<div class="ov-ctl">Index chart range</div>', unsafe_allow_html=True)
+    trend = c2.radio("Index chart range", list(TRENDS), index=1, horizontal=True, key="ov_trend",
+                     label_visibility="collapsed")
+    c3.markdown('<div class="ov-ctl">Movers shown</div>', unsafe_allow_html=True)
+    count = c3.radio("Movers shown", ["Top 5", "Top 10"], horizontal=True, key="ov_n",
+                     label_visibility="collapsed")
     n_show = 5 if count == "Top 5" else 10
 
     all_items = (mov or {}).get("items", {})
