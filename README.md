@@ -2,25 +2,26 @@
 
 # 📈 Agentic Finance Analyst
 
-### An AI research terminal for US and Indian stocks, built on a three-agent LangGraph workflow
+### An AI research terminal for US and Indian stocks, built on a three-stage LangGraph workflow
 
-Ask about a company in plain English. Agents identify the ticker, gather market data and news in parallel,
-and Gemini writes a clear report with a Bullish / Neutral / Bearish verdict. Prices, ratios, charts, the
-scorecard and the signals are computed from real data, and anything missing says so instead of being guessed.
+Ask about a company in plain English. The workflow identifies the ticker, gathers market data and news in
+parallel, and Gemini writes a clear report with a Bullish / Neutral / Bearish verdict. Prices, ratios, charts,
+the scorecard and the signals are computed from real data, and anything missing says so instead of being guessed.
 
 [![Live demo](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://YOUR-APP-NAME.streamlit.app)
 
 ![Python](https://img.shields.io/badge/Python-3.13%20%7C%203.14-3776AB?logo=python&logoColor=white)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.66-FF4B4B?logo=streamlit&logoColor=white)
-![LangGraph](https://img.shields.io/badge/LangGraph-multi--agent-1C3C3C)
+![LangGraph](https://img.shields.io/badge/LangGraph-workflow-1C3C3C)
 ![Gemini](https://img.shields.io/badge/Gemini-2.5%20Flash-4285F4?logo=google&logoColor=white)
 ![yfinance](https://img.shields.io/badge/data-Yahoo%20Finance-6001D2?logo=yahoo&logoColor=white)
 ![Plotly](https://img.shields.io/badge/Plotly-charts-3F4F75?logo=plotly&logoColor=white)
 ![Three.js](https://img.shields.io/badge/Three.js-3D%20globe-000000?logo=threedotjs&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 [Live demo](https://YOUR-APP-NAME.streamlit.app) · [Screenshots](#screenshots) · [Features](#features) ·
-[How it works](#how-it-works) · [Quick start](#quick-start) · [Deploy](#deploy-to-streamlit-community-cloud) ·
-[Limitations](#known-limitations)
+[How it works](#how-it-works) · [Design decisions](#design-decisions) · [Quick start](#quick-start) ·
+[Deploy](#deploy-to-streamlit-community-cloud) · [Limitations](#known-limitations)
 
 <br>
 
@@ -31,7 +32,7 @@ scorecard and the signals are computed from real data, and anything missing says
 > ⚠️ **Educational research only. This is not financial advice.** AI output can be wrong, and market data can
 > be delayed or incomplete. Check primary sources before making any decision.
 
-**At a glance:** 3 agents · 7-check explainable scorecard · 5 market indices · about 50 catalog stocks ·
+**At a glance:** 3-stage workflow · 7-check explainable scorecard · 5 market indices · about 50 catalog stocks ·
 US and Indian (NSE/BSE) listings · line, candlestick and interactive 3D charts · a 3D globe with 12 exchange hubs
 
 ---
@@ -76,10 +77,6 @@ story, the data supplies the numbers, and the page always shows which is which.*
 |---|
 | ![3D chart](docs/chart3d.png) |
 
-<!-- Optional: add docs/overview.png and uncomment the next two lines
-| Market overview |
-| ![Market overview](docs/overview.png) | -->
-
 ---
 
 ## Features
@@ -88,7 +85,7 @@ story, the data supplies the numbers, and the page always shows which is which.*
 
 | | |
 |---|---|
-| 🤖 **Three-agent workflow** | Identify the ticker, research in parallel, then analyze with Gemini, orchestrated by LangGraph |
+| 🤖 **Three-stage workflow** | Identify the ticker, research in parallel, then analyze with Gemini, orchestrated by LangGraph |
 | 🧾 **Compact report** | A summary card (price, verdict gauge, five key stats) followed by collapsible sections, so a long conversation stays short |
 | 🧮 **Explainable scorecard** | Seven transparent checks, each with its rule and value. Missing data is N/A, and no score is shown with fewer than three usable checks |
 | ⚖️ **Signals and risks** | Bullish, bearish and risk factors computed from real numbers, with unusual figures flagged for verification |
@@ -111,7 +108,7 @@ story, the data supplies the numbers, and the page always shows which is which.*
 
 | | |
 |---|---|
-| 🌍 **3D market globe** | Reacts to the agents: it spins up while they research, turns to the stock's exchange, and takes the verdict colour. Orbit rings, capital-flow arcs and light trails |
+| 🌍 **3D market globe** | Reacts to the workflow: it spins up while research runs, turns to the stock's exchange, and takes the verdict colour |
 | 🧊 **Glass UI** | Manrope and Inter typography, cyan / blue / violet accents, responsive layout |
 | ⚡ **Performance mode** | One switch turns off the globe, blur effects and typing animation for slower machines. The globe also lowers its own detail if the frame rate drops |
 | ♿ **Reduced motion** | Respects the operating system's reduced-motion setting |
@@ -131,14 +128,15 @@ flowchart LR
     A --> UI["Report UI<br/>summary, charts, scorecard, news, follow-ups"]
 ```
 
-| Agent | Job | Details |
+| Stage | Job | Details |
 |---|---|---|
 | **1 · Initialize** | Find the ticker | Tries free options first: an explicit `(TICKER)` in the message (what search and catalog clicks send), then a built-in company table matched on whole words. Gemini is only asked if both miss |
 | **2 · Research** | Gather evidence | Runs Yahoo Finance metrics (with NSE/BSE suffix fallback and a retry), a Tavily news search and Yahoo headlines at the same time. Headlines that don't name the company are dropped |
 | **3 · Analyze** | Write the report | Gemini receives today's date and strict rules: older items are background, not recent news, conflicting news loses to the verified metrics, and thin coverage must be said plainly |
 
-Everything after the analysis (charts, scorecard, signals, comparison, overview) is computed in Python from
-Yahoo Finance data.
+The graph is deliberately a fixed pipeline: each stage has one job and the routing is deterministic, which
+keeps results reproducible and costs predictable. Everything after the analysis (charts, scorecard, signals,
+comparison, overview) is computed in Python from Yahoo Finance data.
 
 <details>
 <summary><b>Scorecard rules</b> (every report shows these next to each value)</summary>
@@ -161,6 +159,29 @@ differently), so treat the score as a transparent snapshot, not a prediction.
 
 ---
 
+## Design decisions
+
+Short answers to "why did you build it this way?"
+
+- **Lookup table before the LLM.** The most common companies resolve from a static table matched on whole
+  words, so most questions cost zero AI requests. Gemini is only the fallback. This protects the free-tier
+  quota.
+- **Numbers come from code, prose comes from the model.** Language models are good at explaining and bad at
+  arithmetic and recall. Anything that can be computed (scores, signals, returns) is computed, and the model
+  only writes the narrative around verified inputs.
+- **Research runs in parallel.** Yahoo Finance and Tavily are independent network calls, so they run in a
+  thread pool and the slower one sets the latency instead of the sum of both.
+- **Failures are not cached.** A failed request is never stored and is retried only after a short back-off, so
+  one bad response can neither stick for minutes nor hammer the data source.
+- **Save the answer before drawing it.** The analysis is written to session state first and rendered second,
+  so a UI bug can never lose a report that already cost an AI request.
+- **Follow-ups see only saved data.** The follow-up model gets the report and the numbers shown on screen, and
+  is told to say "not available" instead of using outside knowledge, which keeps answers checkable.
+- **A fixed pipeline, on purpose.** Routing is deterministic because the task has a known order of steps.
+  Open-ended agent loops would add cost and variance without improving a report this structured.
+
+---
+
 ## Quick start
 
 **You need:** Python 3.13 or newer (developed on 3.13, also runs on 3.14), a
@@ -180,7 +201,7 @@ venv\Scripts\activate            # Windows
 pip install -r requirements.txt
 ```
 
-**4. Add your keys.** Create a file named `.env` in the project folder:
+**4. Add your keys.** Copy `.env.example` to `.env` and fill in your keys:
 
 ```
 GOOGLE_API_KEY=your_google_api_key_here
@@ -240,16 +261,17 @@ Streamlit feature that newer versions deprecate.
 
 ```
 app.py                  Streamlit app: layout, chat flow, report assembly
-agent.py                LangGraph agents: initialize -> research -> analyze
+agent.py                LangGraph workflow: initialize -> research -> analyze
 check_ui.py             Import and signature checker for app.py and ui/
 requirements.txt        Pinned dependencies
+.env.example            Template for your API keys
 .streamlit/config.toml  Theme colours
 docs/                   README screenshots
 
 ui/
   theme.py              Fonts, colours, glass styling, animations
   background.py         3D globe (Three.js) and its scene modes
-  components.py         Hero, agent pipeline tracker, ticker tape
+  components.py         Hero, pipeline tracker, ticker tape
   report.py             Summary card and report sections
   chart3d.py            Interactive 3D candlestick explorer
   search.py             Smart search            catalog.py     Built-in stock catalog
@@ -268,7 +290,7 @@ ui/
 
 | Area | Tools |
 |---|---|
-| Agents and AI | LangGraph, LangChain, Google Gemini 2.5 Flash, Tavily |
+| Workflow and AI | LangGraph, LangChain, Google Gemini 2.5 Flash, Tavily |
 | Data | Yahoo Finance through `yfinance`, pandas |
 | App and charts | Streamlit, Plotly, Three.js (3D globe and 3D chart) |
 | Typography | Manrope and Inter |
@@ -307,6 +329,8 @@ Exact versions are pinned in `requirements.txt`.
 - **The scorecard and signals use generic thresholds** that ignore industry norms.
 - **Tickers with a hyphen (for example `BRK-B`)** work from search and catalog clicks, but may not be
   recognised when the AI has to guess a ticker from free text.
+- **The workflow is a fixed pipeline**, not an open-ended agent loop: no stage decides to retry or re-plan
+  based on the quality of its own output.
 - **Company logos** come from Google's favicon service, with initials as a fallback. They are small icons, not
   official brand assets.
 - **The 3D features need WebGL** and rely on `st.components.v1.html`, which Streamlit has deprecated. The app
@@ -341,6 +365,9 @@ honest `N/A` over a guess.
 **What does the AI actually see?** The verified Yahoo Finance metrics, a Tavily news summary, and Yahoo
 headlines that name the company. Follow-up questions see only the saved report data.
 
+**Why a fixed pipeline instead of free-roaming agents?** The task has a known order of steps, so a
+deterministic graph is cheaper, easier to debug and more reproducible. See [Design decisions](#design-decisions).
+
 **Why only US and Indian stocks?** Price formatting, search and the market overview are built for `$` and `₹`.
 More exchanges are on the roadmap.
 
@@ -350,10 +377,11 @@ More exchanges are on the roadmap.
 
 ## Roadmap
 
-- [x] Three-agent research workflow with a compact, collapsible report
+- [x] Three-stage research workflow with a compact, collapsible report
 - [x] Explainable scorecard, signals and follow-up questions
 - [x] Stock comparison and market overview (pulse, indices, movers, heatmap)
 - [x] Report export (HTML, print to PDF)
+- [ ] A critic stage that sends weak or inconsistent reports back for revision
 - [ ] Show price and 52-week range from chart data when Yahoo's quote endpoint is throttled
 - [ ] A second, keyed market-data provider as a fallback
 - [ ] Move the Tavily integration to `langchain-tavily` (the current class is deprecated upstream)
@@ -381,8 +409,7 @@ legal or tax advice, and its authors are not responsible for decisions made usin
 
 ## License
 
-No open-source license has been chosen yet, so by default all rights are reserved. Add a `LICENSE` file (for
-example MIT) to allow reuse.
+Released under the [MIT License](LICENSE).
 
 <div align="center">
 
